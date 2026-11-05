@@ -264,7 +264,8 @@ soundBtn.addEventListener("click", () => {
 // ===== 게임 시작 (처음 상태로 초기화) =====
 function startGame() {
   initAudio();
-  ship = { x: W / 2, y: H - 50, w: 44, h: 36, speed: 6, cooldown: 0 };
+  // w, h = 맞는 범위 (그림 속 비행기 크기에 맞춤: 56px 그림 중 비행기 부분이 약 52px)
+  ship = { x: W / 2, y: H - 50, w: 52, h: 52, speed: 6, cooldown: 0 };
   bullets = [];
   alienBullets = [];
   particles = [];
