@@ -181,7 +181,6 @@ const keys = {};
 
 // ===== 소리 (Web Audio로 직접 만들기) =====
 let audioCtx = null, master = null, soundOn = true;
-let bgmTimer = null, bgmStep = 0;
 
 // 소리 장치 준비 (브라우저는 버튼을 눌러야 소리를 낼 수 있어서 시작 버튼에서 부름)
 function initAudio() {
@@ -240,28 +239,23 @@ function sfxClear() {
   [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, null, 0.25, "square", 0.08, i * 0.12));
 }
 
-// 배경음악: 16박자짜리 짧은 음을 계속 반복
-const BGM_BASS = [110, 110, 165, 110, 131, 131, 196, 131, 98, 98, 147, 98, 123, 123, 185, 123];
-const BGM_LEAD = [440, 0, 523, 0, 659, 0, 523, 0, 392, 0, 494, 0, 587, 0, 494, 0];
+// 배경음악: 폴더에 있는 mp3 파일을 계속 반복 재생
+const bgm = new Audio("806027_잔잔히 밀려오는 파도소리.mp3");
+bgm.loop = true;   // 끝나면 처음부터 다시
+bgm.volume = 0.5;  // 소리 크기 (0 ~ 1)
 function startBgm() {
-  stopBgm();
-  bgmStep = 0;
-  bgmTimer = setInterval(() => {
-    const i = bgmStep % 16;
-    tone(BGM_BASS[i], null, 0.16, "triangle", 0.18);
-    if (BGM_LEAD[i]) tone(BGM_LEAD[i], null, 0.1, "square", 0.025);
-    bgmStep++;
-  }, 160);
+  bgm.muted = !soundOn;
+  bgm.play().catch(() => {}); // 브라우저가 막아도 게임은 계속되게
 }
 function stopBgm() {
-  if (bgmTimer) clearInterval(bgmTimer);
-  bgmTimer = null;
+  bgm.pause();
 }
 
 // 소리 켜기/끄기 버튼
 soundBtn.addEventListener("click", () => {
   soundOn = !soundOn;
   if (master) master.gain.value = soundOn ? 0.5 : 0;
+  bgm.muted = !soundOn; // 배경음악도 같이 켜기/끄기
   soundBtn.textContent = soundOn ? "🔊 소리 켬" : "🔇 소리 끔";
   soundBtn.classList.toggle("off", !soundOn);
   soundBtn.blur(); // 스페이스바를 눌러도 이 버튼이 다시 눌리지 않게
