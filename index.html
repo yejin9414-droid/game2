@@ -113,7 +113,9 @@
     <div id="title">별빛 수비대</div>
     <div id="subtitle">
       ← → 방향키 또는 마우스로 이동<br>
-      스페이스바 또는 마우스 클릭으로 발사
+      스페이스바 또는 마우스 클릭으로 발사<br>
+      <span style="color:#39ff14;text-shadow:0 0 8px #39ff14">● 초록 아이템</span> 10초 동안 총알 두 발 &nbsp;
+      <span style="color:#ffe600;text-shadow:0 0 8px #ffe600">● 노랑 아이템</span> 방어막
     </div>
     <button id="startBtn">게임 시작</button>
   </div>
@@ -172,10 +174,17 @@ for (let i = 0; i < 160; i++) {
 }
 
 // 게임 상태
-let state = "ready";   // ready(대기) / playing(게임 중) / over(게임 오버) / clear(클리어)
+let state = "ready";   // ready(대기) / playing(게임 중) / over(게임 오버)
 let ship, aliens;
-let bullets = [], alienBullets = [], particles = [];
+let bullets = [], alienBullets = [], particles = [], items = [];
 let alienDir, alienSpeed, alienShootTimer, score, frame = 0;
+let lives, stage;              // 목숨, 스테이지
+let formX, formY;              // 외계인 대열 전체가 움직인 거리
+let diveTimer;                 // 다음 급강하까지 남은 시간
+let doubleShot = 0;            // 두 발 쏘기 남은 시간 (60 = 1초)
+let shield = false;            // 방어막 있는지
+let invincible = 0;            // 맞은 직후 잠깐 무적 시간
+let banner = 0;                // "STAGE 1" 글씨 보여주는 시간
 let shake = 0; // 화면 흔들림
 const keys = {};
 
@@ -238,6 +247,10 @@ function sfxGameOver() {
 function sfxClear() {
   [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, null, 0.25, "square", 0.08, i * 0.12));
 }
+function sfxItem()   { [660, 880, 1320].forEach((f, i) => tone(f, null, 0.12, "triangle", 0.15, i * 0.07)); }
+function sfxHurt()   { noise(0.4, 0.45); tone(300, 60, 0.4, "sawtooth", 0.2); }
+function sfxShield() { tone(1500, 200, 0.35, "sine", 0.25); }
+function sfxDive()   { tone(900, 250, 0.5, "sine", 0.06); }
 
 // 배경음악: 폴더에 있는 mp3 파일을 계속 반복 재생
 const bgm = new Audio("806027_잔잔히 밀려오는 파도소리.mp3");
@@ -266,40 +279,54 @@ function startGame() {
   initAudio();
   // w, h = 맞는 범위 (그림 속 비행기 크기에 맞춤: 56px 그림 중 비행기 부분이 약 52px)
   ship = { x: W / 2, y: H - 50, w: 52, h: 52, speed: 6, cooldown: 0 };
-  bullets = [];
-  alienBullets = [];
   particles = [];
-  aliens = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      aliens.push({ x: 140 + c * 66, y: 70 + r * 52, w: 38, h: 28, row: r, alive: true });
-    }
-  }
-  alienDir = 1;
-  alienSpeed = 0.8;
-  alienShootTimer = 60;
+  items = [];
   score = 0;
+  lives = 3;
+  stage = 1;
+  doubleShot = 0;
+  shield = false;
+  invincible = 0;
   shake = 0;
+  setupStage();
   state = "playing";
   overlay.classList.add("hidden");
   startBgm();
 }
 
-// ===== 결과 화면 띄우기 =====
-function endGame(result) {
-  state = result;
-  stopBgm();
-  if (result === "over") {
-    sfxGameOver();
-    shake = 20;
-    titleEl.textContent = "게임 오버";
-    titleEl.style.textShadow = "0 0 6px #fff, 0 0 16px #ff1744, 0 0 32px #ff1744, 0 0 60px #ff1744";
-  } else {
-    sfxClear();
-    titleEl.textContent = "클리어!";
-    titleEl.style.textShadow = "0 0 6px #fff, 0 0 16px #39ff14, 0 0 32px #39ff14, 0 0 60px #39ff14";
+// ===== 스테이지 준비 (외계인 새로 배치) =====
+function setupStage() {
+  bullets = [];
+  alienBullets = [];
+  aliens = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      // mode: form(대열) / dive(급강하 중) / return(대열로 돌아가는 중)
+      aliens.push({ x: 0, y: 0, w: 38, h: 28, row: r, col: c, alive: true, mode: "form", angle: 0 });
+    }
   }
-  subtitleEl.innerHTML = "점수: " + score;
+  formX = 0;
+  formY = -230;  // 화면 위에서 내려오며 등장
+  alienDir = 1;
+  alienSpeed = 0.8 + (stage - 1) * 0.35;  // 스테이지가 오를수록 빨라짐
+  alienShootTimer = 90;
+  diveTimer = 200;
+  banner = 150;
+}
+
+// 외계인이 대열에서 있어야 할 자리
+function homeX(a) { return 140 + a.col * 66 + formX; }
+function homeY(a) { return 70 + a.row * 52 + formY; }
+
+// ===== 결과 화면 띄우기 =====
+function endGame() {
+  state = "over";
+  stopBgm();
+  sfxGameOver();
+  shake = 20;
+  titleEl.textContent = "게임 오버";
+  titleEl.style.textShadow = "0 0 6px #fff, 0 0 16px #ff1744, 0 0 32px #ff1744, 0 0 60px #ff1744";
+  subtitleEl.innerHTML = "점수: " + score + "<br>스테이지: " + stage;
   startBtn.textContent = "다시 하기";
   overlay.classList.remove("hidden");
 }
@@ -325,7 +352,13 @@ startBtn.addEventListener("click", () => { startBtn.blur(); startGame(); });
 // ===== 총알 쏘기 =====
 function shoot() {
   if (ship.cooldown > 0) return;
-  bullets.push({ x: ship.x, y: ship.y - ship.h / 2, speed: 9 });
+  if (doubleShot > 0) {
+    // 초록 아이템 효과: 두 발씩
+    bullets.push({ x: ship.x - 10, y: ship.y - ship.h / 2, speed: 9 });
+    bullets.push({ x: ship.x + 10, y: ship.y - ship.h / 2, speed: 9 });
+  } else {
+    bullets.push({ x: ship.x, y: ship.y - ship.h / 2, speed: 9 });
+  }
   ship.cooldown = 15; // 연속 발사 간격
   sfxShoot();
 }
@@ -393,29 +426,92 @@ function update() {
   ship.x = Math.max(ship.w / 2, Math.min(W - ship.w / 2, ship.x));
   if (keys["Space"]) shoot();
   if (ship.cooldown > 0) ship.cooldown--;
+  if (doubleShot > 0) doubleShot--;
+  if (invincible > 0) invincible--;
+  if (banner > 0) banner--;
 
   // 내 총알 이동
   for (const b of bullets) b.y -= b.speed;
   bullets = bullets.filter(b => b.y > -10);
 
-  // 외계인 이동: 끝에 닿으면 방향 바꾸고 한 칸 내려오기
   const alive = aliens.filter(a => a.alive);
-  let hitEdge = false;
-  for (const a of alive) {
-    a.x += alienDir * alienSpeed;
-    if (a.x - a.w / 2 < 10 || a.x + a.w / 2 > W - 10) hitEdge = true;
-  }
-  if (hitEdge) {
-    alienDir *= -1;
-    for (const a of alive) { a.x += alienDir * alienSpeed; a.y += 18; }
+  const entering = formY < 0; // 대열이 아직 화면 위에서 내려오는 중
+
+  // 대열 이동: 끝에 닿으면 방향 바꾸고 한 칸 내려오기
+  if (entering) {
+    formY = Math.min(0, formY + 2.5);
+  } else {
+    formX += alienDir * alienSpeed;
+    let hitEdge = false;
+    for (const a of alive) {
+      const hx = homeX(a);
+      if (hx - a.w / 2 < 10 || hx + a.w / 2 > W - 10) hitEdge = true;
+    }
+    if (hitEdge) {
+      alienDir *= -1;
+      formX += alienDir * alienSpeed;
+      formY += 18;
+    }
   }
 
-  // 외계인 총알 발사 (살아있는 외계인 중 무작위)
+  // 급강하 시작: 가끔 대열의 외계인 하나가 빠져나옴 (스테이지가 높을수록 자주, 여러 마리)
+  const diving = alive.filter(a => a.mode !== "form").length;
+  const maxDivers = Math.min(1 + Math.floor(stage / 2), 5);
+  if (!entering) diveTimer--;
+  if (diveTimer <= 0 && diving < maxDivers) {
+    const ready = alive.filter(a => a.mode === "form");
+    if (ready.length > 0) {
+      const a = ready[Math.floor(Math.random() * ready.length)];
+      const side = a.x < W / 2 ? -1 : 1;  // 바깥쪽으로 크게 돌면서 나감
+      a.mode = "dive";
+      a.t = 0;
+      a.shot = false;
+      a.speedT = 0.0055 + stage * 0.0007;
+      // 곡선(베지어)의 점 4개: 출발 → 위로 살짝 → 옆으로 크게 휘어짐 → 비행기 쪽 아래로
+      a.path = [
+        { x: a.x, y: a.y },
+        { x: a.x + side * 140, y: a.y - 90 },
+        { x: ship.x - side * 260, y: H * 0.55 },
+        { x: ship.x + side * 60, y: H + 50 },
+      ];
+      sfxDive();
+    }
+    diveTimer = Math.max(50, 260 - stage * 35) + Math.random() * 60;
+  }
+
+  // 외계인 하나하나 위치 정하기
+  for (const a of alive) {
+    if (a.mode === "form") {
+      a.x = homeX(a); a.y = homeY(a); a.angle = 0;
+    } else if (a.mode === "dive") {
+      a.t += a.speedT;
+      const t = Math.min(a.t, 1), u = 1 - t, [p0, p1, p2, p3] = a.path;
+      const nx = u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x;
+      const ny = u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y;
+      a.angle = Math.atan2(ny - a.y, nx - a.x) - Math.PI / 2; // 날아가는 방향으로 몸을 돌림
+      a.x = nx; a.y = ny;
+      // 내려오는 도중에 한 번 총알 발사
+      if (!a.shot && a.t > 0.45) {
+        a.shot = true;
+        alienBullets.push({ x: a.x, y: a.y + a.h / 2, w: 6, h: 14, speed: Math.min(4 + stage * 0.3, 7) });
+      }
+      // 화면 아래로 나가면 위에서 다시 나타나 대열로 돌아감
+      if (a.t >= 1) { a.mode = "return"; a.x = homeX(a); a.y = -40; a.angle = 0; }
+    } else if (a.mode === "return") {
+      const dx = homeX(a) - a.x, dy = homeY(a) - a.y;
+      const dist = Math.hypot(dx, dy), sp = 3 + stage * 0.3;
+      if (dist <= sp) a.mode = "form";
+      else { a.x += dx / dist * sp; a.y += dy / dist * sp; }
+    }
+  }
+
+  // 외계인 총알 발사 (대열에 있는 외계인 중 무작위)
   alienShootTimer--;
-  if (alienShootTimer <= 0 && alive.length > 0) {
-    const shooter = alive[Math.floor(Math.random() * alive.length)];
-    alienBullets.push({ x: shooter.x, y: shooter.y + shooter.h / 2, w: 6, h: 14, speed: 4 });
-    alienShootTimer = Math.max(20, 70 - (ROWS * COLS - alive.length) * 1.5);
+  const shooters = alive.filter(a => a.mode === "form");
+  if (!entering && alienShootTimer <= 0 && shooters.length > 0) {
+    const s = shooters[Math.floor(Math.random() * shooters.length)];
+    alienBullets.push({ x: s.x, y: s.y + s.h / 2, w: 6, h: 14, speed: Math.min(4 + stage * 0.3, 7) });
+    alienShootTimer = Math.max(20, 70 - stage * 5 - (ROWS * COLS - alive.length) * 1.2);
   }
   for (const b of alienBullets) b.y += b.speed;
   alienBullets = alienBullets.filter(b => b.y < H + 20);
@@ -426,27 +522,87 @@ function update() {
       if (a.alive && hit({ x: b.x, y: b.y, w: 4, h: 14 }, a)) {
         a.alive = false;
         b.y = -100; // 총알 없애기
-        score += (ROWS - a.row) * 10;
+        score += 10; // 한 마리에 10점
         explode(a.x, a.y, ROW_COLORS[a.row]);
         sfxExplode();
         shake = Math.max(shake, 4);
-        alienSpeed += 0.05; // 남은 외계인이 점점 빨라짐
+        alienSpeed += 0.03; // 남은 외계인이 점점 빨라짐
+        // 10% 확률로 아이템 떨어뜨리기 (초록 또는 노랑 반반)
+        if (Math.random() < 0.1) {
+          items.push({ x: a.x, y: a.y, w: 24, h: 24, type: Math.random() < 0.5 ? "green" : "yellow" });
+        }
+        break;
       }
     }
   }
 
-  // 외계인 총알이나 외계인에 우주선이 맞았는지
-  for (const b of alienBullets) {
-    if (hit(b, ship)) { explode(ship.x, ship.y, "#00f0ff", 50); endGame("over"); return; }
+  // 아이템 떨어지기 + 줍기
+  for (const it of items) {
+    it.y += 2.2;
+    if (hit(it, ship)) {
+      it.y = H + 100; // 주운 아이템 없애기
+      sfxItem();
+      if (it.type === "green") {
+        doubleShot = 600; // 10초 (1초 = 60)
+        explode(ship.x, ship.y, "#39ff14", 14);
+      } else {
+        shield = true;
+        explode(ship.x, ship.y, "#ffe600", 14);
+      }
+    }
   }
-  for (const a of aliens) {
-    if (a.alive && (hit(a, ship) || a.y + a.h / 2 >= H - 10)) {
-      explode(ship.x, ship.y, "#00f0ff", 50); endGame("over"); return;
+  items = items.filter(it => it.y < H + 20);
+
+  // 외계인 총알에 우주선이 맞았는지
+  for (const b of alienBullets) {
+    if (hit(b, ship) && invincible === 0) {
+      b.y = H + 100; // 맞은 총알 없애기
+      hurtShip();
+    }
+  }
+  // 외계인과 부딪혔는지 (부딪힌 외계인도 터짐)
+  for (const a of alive) {
+    if (a.alive && hit(a, ship) && invincible === 0) {
+      a.alive = false;
+      explode(a.x, a.y, ROW_COLORS[a.row]);
+      hurtShip();
+    }
+  }
+  if (state !== "playing") return;
+
+  // 대열이 우주선 있는 곳까지 내려오면 게임 오버
+  for (const a of alive) {
+    if (a.alive && a.mode === "form" && a.y + a.h / 2 >= ship.y - ship.h / 2) {
+      explode(ship.x, ship.y, "#00f0ff", 50); endGame(); return;
     }
   }
 
-  // 외계인을 모두 물리쳤는지
-  if (aliens.every(a => !a.alive)) endGame("clear");
+  // 외계인을 모두 물리치면 다음 스테이지로
+  if (aliens.every(a => !a.alive)) {
+    stage++;
+    sfxClear();
+    setupStage();
+  }
+}
+
+// ===== 우주선이 맞았을 때 =====
+function hurtShip() {
+  if (invincible > 0 || state !== "playing") return;
+  if (shield) {
+    // 노랑 아이템 방어막이 대신 막아줌
+    shield = false;
+    invincible = 60;
+    explode(ship.x, ship.y, "#ffe600", 30);
+    sfxShield();
+    shake = Math.max(shake, 8);
+    return;
+  }
+  lives--;
+  explode(ship.x, ship.y, "#00f0ff", 50);
+  shake = Math.max(shake, 12);
+  if (lives <= 0) { endGame(); return; }
+  sfxHurt();
+  invincible = 120; // 2초 동안 무적 (깜빡임)
 }
 
 // ===== 그리기: 바닥의 네온 격자 =====
@@ -503,6 +659,7 @@ function drawAlien(a) {
   const wiggle = Math.sin(frame * 0.15 + a.x * 0.05) * 3; // 다리/더듬이 흔들림
   ctx.save();
   ctx.translate(a.x, a.y);
+  if (a.angle) ctx.rotate(a.angle); // 급강하할 때 몸을 기울임
   ctx.shadowColor = color;
   ctx.shadowBlur = 14;
   ctx.fillStyle = color + "33";  // 속은 반투명하게
@@ -549,10 +706,49 @@ function drawAlien(a) {
   ctx.restore();
 }
 
-// 빛나는 글씨
-function neonText(text, x, y, color, align = "left") {
+// ===== 그리기: 하트 (목숨) =====
+function drawHeart(x, y, s, full) {
   ctx.save();
-  ctx.font = "bold 20px sans-serif";
+  ctx.translate(x, y);
+  ctx.beginPath();
+  ctx.moveTo(0, s * 0.9);
+  ctx.bezierCurveTo(-s * 1.3, 0, -s * 0.6, -s * 1.05, 0, -s * 0.35);
+  ctx.bezierCurveTo(s * 0.6, -s * 1.05, s * 1.3, 0, 0, s * 0.9);
+  ctx.closePath();
+  ctx.lineWidth = 2;
+  if (full) {
+    ctx.shadowColor = "#ff2b6a"; ctx.shadowBlur = 12;
+    ctx.fillStyle = "#ff2b6a";
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = "#555"; // 잃은 목숨은 회색 빈 하트
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ===== 그리기: 아이템 (빛나는 구슬) =====
+function drawItem(it) {
+  const color = it.type === "green" ? "#39ff14" : "#ffe600";
+  const pulse = 1 + Math.sin(frame * 0.2) * 0.12;
+  ctx.save();
+  ctx.translate(it.x, it.y);
+  ctx.shadowColor = color; ctx.shadowBlur = 18;
+  ctx.fillStyle = color + "44";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, 11 * pulse, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 13px sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(it.type === "green" ? "x2" : "S", 0, 1);
+  ctx.restore();
+}
+
+// 빛나는 글씨
+function neonText(text, x, y, color, align = "left", size = 20) {
+  ctx.save();
+  ctx.font = "bold " + size + "px sans-serif";
   ctx.textAlign = align;
   ctx.shadowColor = color; ctx.shadowBlur = 12;
   ctx.fillStyle = color;
@@ -596,12 +792,37 @@ function draw() {
     }
     ctx.shadowBlur = 0;
 
-    if (state !== "over") drawShip(ship.x, ship.y);
+    for (const it of items) drawItem(it);
 
-    // 점수와 남은 외계인 수
+    // 내 비행기 (맞은 직후 무적일 때는 깜빡깜빡)
+    if (state !== "over" && Math.floor(invincible / 5) % 2 === 0) drawShip(ship.x, ship.y);
+
+    // 방어막 (노란 빛 동그라미)
+    if (shield && state !== "over") {
+      ctx.save();
+      ctx.shadowColor = "#ffe600"; ctx.shadowBlur = 18;
+      ctx.strokeStyle = "rgba(255, 230, 0, " + (0.6 + Math.sin(frame * 0.15) * 0.3) + ")";
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(ship.x, ship.y, 38, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+
+    // 위쪽: 점수, 스테이지, 목숨(하트)
     neonText("점수: " + score, 18, 34, "#00f0ff");
-    const left = aliens.filter(a => a.alive).length;
-    neonText("남은 외계인: " + left, W / 2, 34, "#ff2bd6", "center");
+    neonText("STAGE " + stage, W / 2, 34, "#ff2bd6", "center");
+    for (let i = 0; i < 3; i++) drawHeart(30 + i * 30, 62, 11, i < lives);
+
+    // 아래쪽: 아이템 효과 남은 시간
+    if (doubleShot > 0) neonText("더블샷 " + Math.ceil(doubleShot / 60) + "초", 18, H - 16, "#39ff14", "left", 16);
+    if (shield) neonText("방어막", doubleShot > 0 ? 130 : 18, H - 16, "#ffe600", "left", 16);
+
+    // 스테이지 시작 글씨
+    if (banner > 0 && state === "playing") {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, banner / 30);
+      neonText("STAGE " + stage, W / 2, H / 2, "#ffffff", "center", 56);
+      ctx.restore();
+    }
   }
 
   // 폭발 조각 (빛이 겹치면 더 밝게)
